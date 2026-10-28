@@ -1,4 +1,4 @@
-module github.com/GravyNacho/rudeproxy
+module rudeproxy
 
 go 1.27.0
 
