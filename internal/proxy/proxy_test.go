@@ -8,9 +8,9 @@ func TestConfigValidate(t *testing.T) {
 		cfg     Config
 		wantErr bool
 	}{
-		{"valid", Config{Listen: ":8080", Target: "localhost:9000"}, false},
-		{"missing listen", Config{Target: "localhost:9000"}, true},
-		{"missing target", Config{Listen: ":8080"}, true},
+		{"valid", Config{Listen: ":8080", Upstream: "localhost:9000"}, false},
+		{"missing listen", Config{Upstream: "localhost:9000"}, true},
+		{"missing upstream", Config{Listen: ":8080"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,6 +1,6 @@
 module rudeproxy
 
-go 1.27.0
+go 1.27.2
 
 tool (
 	github.com/golangci/golangci-lint/v2/cmd/golangci-lint

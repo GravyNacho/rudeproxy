@@ -11,6 +11,12 @@ linters:
     - revive
     - unconvert
     - unparam
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
 
 formatters:
   enable:
@@ -19,4 +25,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/GravyNacho/rudeproxy
+        - /rudeproxy
