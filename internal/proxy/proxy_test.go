@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {
@@ -19,5 +22,15 @@ func TestConfigValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestParseUpstreamHidesCredentials(t *testing.T) {
+	_, err := parseUpstream("https://user:secret@host:abc")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Errorf("error leaks credentials: %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -29,13 +30,13 @@ func (c Config) Validate() error {
 	if c.Listen == "" {
 		return errors.New("listen address is required")
 	}
-	if c.Upstream == "" {
-		return errors.New("target address is required")
+	if _, err := parseUpstream(c.Upstream); err != nil {
+		return err
 	}
 	return nil
 }
 
-// Proxy passes requests through to the target
+// Proxy passes requests through to the upstream target
 type Proxy struct {
 	upstream        *url.URL
 	transport       http.RoundTripper
@@ -50,7 +51,7 @@ func New(cfg Config) (*Proxy, error) {
 		return nil, err
 	}
 
-	upstream, err := ValidateUpstream(cfg.Upstream)
+	upstream, err := parseUpstream(cfg.Upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -79,29 +80,38 @@ func (p *Proxy) Run(ctx context.Context) error {
 	return nil
 }
 
-// ValidateUpstream parses the upstream string and validates that it is a bare origin.
-func ValidateUpstream(raw string) (*url.URL, error) {
+// parseUpstream parses the upstream string and validates that it is a bare origin.
+func parseUpstream(raw string) (*url.URL, error) {
 	const example = "https://api.example.com"
 	if raw == "" {
 		return nil, fmt.Errorf("upstream is empty; example: %s", example)
 	}
+	// default to http if a scheme isn't present
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("upstream %q: %w", raw, err)
-	}
-	if u.Scheme != "https" && u.Scheme != "http" {
-		return nil, fmt.Errorf("upstream %q: scheme must be http or https", raw)
-	}
-	if u.Host == "" || u.Hostname() == "" {
-		return nil, fmt.Errorf("upstream %q: no host; give an origin like %s", raw, example)
+		// err includes the full input, which may contain credentials. Inner Err does not.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return nil, fmt.Errorf("unable to parse upstream: %w", urlErr.Err)
+		}
+		return nil, errors.New("unable to parse upstream")
 	}
 	// Credentials in the URL could end up in logs.
 	if u.User != nil {
-		return nil, fmt.Errorf("upstream %q: credentials in the URL are not allowed", raw)
+		return nil, fmt.Errorf("upstream %q: credentials in the URL are not allowed", u.Redacted())
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return nil, fmt.Errorf("upstream %q: scheme must be http or https", u.Redacted())
+	}
+	if u.Host == "" || u.Hostname() == "" {
+		return nil, fmt.Errorf("upstream %q: no host; give an origin like %s", u.Redacted(), example)
 	}
 	// The forwarder sends the client's path as-is, a base path would be dropped.
 	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("upstream %q: must be a bare origin like %s, with no path, query, or fragment", raw, example)
+		return nil, fmt.Errorf("upstream must be a bare origin like %s, with no path, query, or fragment", example)
 	}
 	u.Path = ""
 	return u, nil

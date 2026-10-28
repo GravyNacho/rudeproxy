@@ -23,6 +23,8 @@ formatters:
     - gofumpt
     - goimports
   settings:
+    gofumpt:
+      module-path: rudeproxy
     goimports:
       local-prefixes:
-        - /rudeproxy
+        - rudeproxy

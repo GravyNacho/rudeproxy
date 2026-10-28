@@ -9,9 +9,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"rudeproxy/internal/proxy"
 	"strings"
 	"syscall"
+
+	"rudeproxy/internal/proxy"
 )
 
 // version is set at build. -ldflags "-X main.version=...".
@@ -70,23 +71,23 @@ Run "rudeproxy <command> -h" for a command's flags.
 }
 
 func runServe(ctx context.Context, args []string, stderr io.Writer) int {
-	flag := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flag.SetOutput(stderr)
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	var (
-		listen          = flag.String("listen", "127.0.0.1:8080", "address to listen on")
-		upstream        = flag.String("upstream", "", "upstream address to forward to (required)")
-		upstreamTimeout = flag.Duration("upstream-timeout", proxy.DefaultUpstreamTimeout, "how long to wait for the upstream, independent of the client")
-		logLevel        = flag.String("log-level", "info", "minimum level to log: debug, info, warn, or error")
+		listen          = fs.String("listen", "127.0.0.1:8080", "address to listen on")
+		upstream        = fs.String("upstream", "", "upstream address to forward to (required)")
+		upstreamTimeout = fs.Duration("upstream-timeout", proxy.DefaultUpstreamTimeout, "how long to wait for the upstream, independent of the client")
+		logLevel        = fs.String("log-level", "info", "minimum level to log: debug, info, warn, or error")
 	)
-	if err := flag.Parse(args); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return exitToolFailure
 	}
-	if flag.NArg() > 0 {
-		fmt.Fprintf(stderr, "rudeproxy serve: unexpected arguments: %v\n", flag.Args())
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "rudeproxy serve: unexpected arguments: %v\n", fs.Args())
 		return exitToolFailure
 	}
 	if *upstream == "" {
-		fmt.Fprintln(stderr, "rudeproxy serve: -upstream is required (e.g. -target https://api.example.com)")
+		fmt.Fprintln(stderr, "rudeproxy serve: -upstream is required (e.g. -upstream https://api.example.com)")
 		return exitToolFailure
 	}
 	logOpts := &slog.HandlerOptions{}
@@ -101,12 +102,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, logOpts))
 	log.Log(ctx, logOpts.Level.Level(), fmt.Sprintf("logging initialized at log-level %s", logOpts.Level.Level().String()))
 
-	log.Info("starting rudeproxy", "version", version, "listen", *listen, "upstream", *upstream)
-	// TODO: thowing away the ctx for now, as we aren't using it yet. Circle back when starting the actual proxy-ing work.
+	// TODO: throwing away the ctx for now, as we aren't using it yet. Circle back when starting the actual proxy-ing work.
 	_, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// TODO: thowing away the proxy for now, as we aren't using it yet. Circle back when starting the actual proxy-ing work.
+	// TODO: throwing away the proxy for now, as we aren't using it yet. Circle back when starting the actual proxy-ing work.
 	_, err := proxy.New(proxy.Config{
 		Listen:          *listen,
 		Upstream:        *upstream,
@@ -117,6 +117,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 		log.Error("refusing to start", "err", err)
 		return exitToolFailure
 	}
+	log.Info("starting rudeproxy", "version", version, "listen", *listen, "upstream", *upstream)
 
 	return exitOK
 }
