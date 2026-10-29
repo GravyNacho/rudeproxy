@@ -83,6 +83,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 		upstream        = fs.String("upstream", "", "upstream address to forward to (required)")
 		upstreamTimeout = fs.Duration("upstream-timeout", proxy.DefaultUpstreamTimeout, "how long to wait for the upstream, independent of the client")
 		logLevel        = fs.String("log-level", "info", "minimum level to log: debug, info, warn, or error")
+		dropRate        = fs.Float64("response-drop-rate", 0, "chance (0-1) of dropping the connection after the upstream responds")
+		seed            = fs.Uint64("seed", 0, "random seed for faults; 0 picks one")
 	)
 	if err := fs.Parse(args); err != nil {
 		return exitToolFailure
@@ -95,6 +97,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "rudeproxy serve: -upstream is required (e.g. -upstream https://api.example.com)")
 		return exitToolFailure
 	}
+
 	logOpts := &slog.HandlerOptions{}
 
 	level, ok := logLevels[strings.ToLower(*logLevel)]
@@ -106,11 +109,17 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 
 	log := slog.New(slog.NewTextHandler(stderr, logOpts))
 
+	if *dropRate == 0 {
+		log.Warn("response drop rate set to 0, rudeproxy will act as a friendly passthrough proxy")
+	}
+
 	p, err := proxy.New(proxy.Config{
-		Listen:          *listen,
-		Upstream:        *upstream,
-		UpstreamTimeout: *upstreamTimeout,
-		Logger:          log,
+		Listen:           *listen,
+		Upstream:         *upstream,
+		UpstreamTimeout:  *upstreamTimeout,
+		Logger:           log,
+		ResponseDropRate: *dropRate,
+		RudenessSeed:     *seed,
 	})
 	if err != nil {
 		log.Error("refusing to start", "err", err)

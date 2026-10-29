@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,12 +29,14 @@ const (
 
 // Config of the proxy
 type Config struct {
-	Listen          string
-	Upstream        string
-	UpstreamTimeout time.Duration
-	Logger          *slog.Logger
-	MaxRequestBody  int64
-	MaxResponseBody int64
+	Listen           string
+	Upstream         string
+	UpstreamTimeout  time.Duration
+	Logger           *slog.Logger
+	MaxRequestBody   int64
+	MaxResponseBody  int64
+	ResponseDropRate float64
+	RudenessSeed     uint64
 }
 
 // upstreamResponse is a fully read upstream response. The upstream body is already closed.
@@ -51,17 +56,24 @@ func (c Config) Validate() error {
 	if _, err := parseUpstream(c.Upstream); err != nil {
 		return err
 	}
+	if c.ResponseDropRate < 0 || c.ResponseDropRate > 1 || math.IsNaN(c.ResponseDropRate) {
+		return fmt.Errorf("response drop rate must be between 0 and 1, got %v", c.ResponseDropRate)
+	}
 	return nil
 }
 
 // Proxy passes requests through to the upstream target
 type Proxy struct {
-	upstream        *url.URL
-	transport       http.RoundTripper
-	upstreamTimeout time.Duration
-	log             *slog.Logger
-	maxRequestBody  int64
-	maxResponseBody int64
+	upstream         *url.URL
+	transport        http.RoundTripper
+	upstreamTimeout  time.Duration
+	log              *slog.Logger
+	maxRequestBody   int64
+	maxResponseBody  int64
+	responseDropRate float64
+	rudenessSeed     uint64
+	mu               sync.Mutex // guards rng
+	rng              *rand.Rand // not safe for concurrent use
 }
 
 // New returns a new proxy with the given config
@@ -89,14 +101,20 @@ func New(cfg Config) (*Proxy, error) {
 	if cfg.MaxResponseBody <= 0 {
 		cfg.MaxResponseBody = DefaultMaxResponseBody
 	}
+	if cfg.RudenessSeed == 0 {
+		cfg.RudenessSeed = rand.Uint64()
+	}
 	// TODO: Swap the req/resp body sizes to the cfg ones when they're actually configurable
 	p := &Proxy{
-		upstream:        upstream,
-		transport:       newTransport(),
-		upstreamTimeout: cfg.UpstreamTimeout,
-		maxRequestBody:  DefaultMaxRequestBody,
-		maxResponseBody: DefaultMaxResponseBody,
-		log:             cfg.Logger,
+		upstream:         upstream,
+		transport:        newTransport(),
+		upstreamTimeout:  cfg.UpstreamTimeout,
+		maxRequestBody:   DefaultMaxRequestBody,
+		maxResponseBody:  DefaultMaxResponseBody,
+		log:              cfg.Logger,
+		responseDropRate: cfg.ResponseDropRate,
+		rudenessSeed:     cfg.RudenessSeed,
+		rng:              rand.New(rand.NewPCG(cfg.RudenessSeed, cfg.RudenessSeed)),
 	}
 	return p, nil
 }
@@ -138,6 +156,9 @@ func parseUpstream(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+// Seed returns the RNG seed in use.
+func (p *Proxy) Seed() uint64 { return p.rudenessSeed }
+
 // ServeHTTP implements http.Handler.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -176,7 +197,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"rudeproxy: upstream request failed: "+err.Error())
 		return
 	}
-
+	if p.shouldDrop() {
+		if err := dropConnection(w); err != nil {
+			log.Warn("could not drop connection. Sending 502", "err", err)
+			p.writeError(w, http.StatusBadGateway, "rudeproxy_upstream_unavailable", "rudeproxy: upstream response lost")
+			return
+		}
+		log.Info("intentionally dropped response", "upstream_status", resp.status, "duration", time.Since(start))
+		return
+	}
 	writeResponse(w, r, resp)
 	log.Info("forwarded", "status", resp.status, "duration", time.Since(start))
 }
