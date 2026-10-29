@@ -87,6 +87,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 		seed            = fs.Uint64("seed", 0, "random seed for faults; 0 picks one")
 	)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return exitOK
+		}
 		return exitToolFailure
 	}
 	if fs.NArg() > 0 {

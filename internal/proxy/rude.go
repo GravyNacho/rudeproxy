@@ -1,4 +1,3 @@
-// Package proxy implements the rude behavior of the proxy
 package proxy
 
 import (
