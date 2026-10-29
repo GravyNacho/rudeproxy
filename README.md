@@ -3,7 +3,7 @@ An intentionally flaky passthrough proxy for testing network resiliency.
 
 You point your client at rudeproxy instead of your real API. It forwards each request to the upstream and is sometimes rude about it.
 
-Currently the only rude thing it does is drop the connection *after* the upstream has already responded. Your client sees a dead connection but the upstream handled the request. The intent is to 
+Currently the only rude thing it does is drop the connection *after* the upstream has already responded. Your client sees a dead connection but the upstream handled the request. The intent is to put pressure on operations where unsafe retries could cause issues, like a double charge.
 
 This is an early MVP. If you need fault injection today, see [toxiproxy](https://github.com/Shopify/toxiproxy). More kinds of rudeness (and vendor-specific plugins) are planned.
 
