@@ -3,14 +3,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"rudeproxy/internal/proxy"
 )
@@ -73,6 +77,7 @@ Run "rudeproxy <command> -h" for a command's flags.
 func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	// TODO: Add flags for configuring req/resp body size, and connection counts on the transport
 	var (
 		listen          = fs.String("listen", "127.0.0.1:8080", "address to listen on")
 		upstream        = fs.String("upstream", "", "upstream address to forward to (required)")
@@ -100,14 +105,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	logOpts.Level = level
 
 	log := slog.New(slog.NewTextHandler(stderr, logOpts))
-	log.Log(ctx, logOpts.Level.Level(), fmt.Sprintf("logging initialized at log-level %s", logOpts.Level.Level().String()))
 
-	// TODO: throwing away the ctx for now, as we aren't using it yet. Circle back when starting the actual proxy-ing work.
-	_, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// TODO: throwing away the proxy for now, as we aren't using it yet. Circle back when starting the actual proxy-ing work.
-	_, err := proxy.New(proxy.Config{
+	p, err := proxy.New(proxy.Config{
 		Listen:          *listen,
 		Upstream:        *upstream,
 		UpstreamTimeout: *upstreamTimeout,
@@ -117,7 +116,36 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 		log.Error("refusing to start", "err", err)
 		return exitToolFailure
 	}
-	log.Info("starting rudeproxy", "version", version, "listen", *listen, "upstream", *upstream)
+	log.Info("starting rudeproxy", "version", version, "listen", *listen, "upstream", *upstream, "log-level", logOpts.Level.Level().String())
+	lnCfg := &net.ListenConfig{}
+	ln, err := lnCfg.Listen(ctx, "tcp", *listen)
+	if err != nil {
+		log.Error("listen failed", "err", err)
+		return exitToolFailure
+	}
 
+	srv := proxy.NewServer(p, log)
+	log.Info("rudeproxy listening", "addr", ln.Addr().String(), "upstream", *upstream, "version", version)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ln) }()
+
+	select {
+	case err := <-serveErr:
+		log.Error("server failed", "err", err)
+		return exitToolFailure
+	case <-ctx.Done():
+	}
+
+	log.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("shutdown did not complete cleanly", "err", err)
+		return exitToolFailure
+	}
+	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("server failed", "err", err)
+		return exitToolFailure
+	}
 	return exitOK
 }
